@@ -7,6 +7,7 @@ on:
         description: "Outer WARP edge country (ISO code, e.g. US/JP/SG/DE)"
         required: true
         default: "US"
+
       outer_proto:
         description: "Outer tunnel protocol"
         required: true
@@ -15,6 +16,7 @@ on:
           - awg
           - wg
         default: awg
+
       inner_proto:
         description: "Inner tunnel protocol"
         required: true
@@ -23,6 +25,7 @@ on:
           - wg
           - awg
         default: wg
+
       tun_ping:
         description: "Measure tunnel ping/loss while selecting endpoints"
         required: true
@@ -42,6 +45,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v6
 
@@ -49,29 +53,52 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           API="https://api.github.com/repos/vernette/warpscout/releases/latest"
+
           URL="$(curl -fsSL "$API" | python3 -c '
-          import json,sys
-          d=json.load(sys.stdin)
-          xs=[x["browser_download_url"] for x in d["assets"]
-              if x["name"].endswith("linux_amd64.tar.gz")]
-          print(xs[0] if xs else "")
+          import json
+          import sys
+
+          data = json.load(sys.stdin)
+
+          assets = [
+              x["browser_download_url"]
+              for x in data["assets"]
+              if x["name"].endswith("linux_amd64.tar.gz")
+          ]
+
+          print(assets[0] if assets else "")
           ')"
+
           test -n "$URL"
+
+          echo "Downloading:"
+          echo "$URL"
+
           curl -fL "$URL" -o /tmp/warpscout.tgz
+
           mkdir -p /tmp/warpscout
+
           tar -xzf /tmp/warpscout.tgz -C /tmp/warpscout
+
           BIN="$(find /tmp/warpscout -type f -name warpscout -perm -111 | head -n1)"
+
           test -n "$BIN"
+
           sudo install -m 0755 "$BIN" /usr/local/bin/warpscout
+
           warpscout version
 
       - name: Register fresh WARP account
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p work
+
           cd work
+
           warpscout register
 
       - name: Pick outer WARP endpoint
@@ -82,22 +109,45 @@ jobs:
           TUNPING: ${{ inputs.tun_ping }}
         run: |
           set -euo pipefail
+
           cd work
-          ARGS=(scan -p "$OUTER_PROTO" -country "$COUNTRY" -best -no-report)
+
+          ARGS=(
+            scan
+            -p "$OUTER_PROTO"
+            -country "$COUNTRY"
+            -best
+            -no-report
+          )
+
           if [ "$TUNPING" = "true" ]; then
             ARGS+=( -P )
           fi
 
-          echo "Selecting outer endpoint for country: $COUNTRY"
-          OUTER="$(warpscout "${ARGS[@]}" 2>outer-scan.log | tail -n1 | tr -d '\r')"
+          echo "Selecting outer endpoint..."
+          echo "Country: $COUNTRY"
+          echo "Protocol: $OUTER_PROTO"
 
-          if ! printf '%s' "$OUTER" | grep -Eq '^[0-9a-fA-F:.]+\:[0-9]+$'; then
-            echo "Could not obtain a valid outer endpoint."
+          OUTER="$(
+            warpscout "${ARGS[@]}" \
+              2>outer-scan.log |
+              tail -n1 |
+              tr -d '\r'
+          )"
+
+          if ! printf '%s' "$OUTER" | grep -Eq '^[0-9a-fA-F:.]+:[0-9]+$'; then
+            echo "ERROR: Could not obtain a valid outer endpoint."
+
+            echo "===== warpscout log ====="
+
             cat outer-scan.log || true
+
             exit 1
           fi
 
-          echo "Outer endpoint: $OUTER"
+          echo "Outer endpoint:"
+          echo "$OUTER"
+
           printf '%s\n' "$OUTER" > outer.txt
 
       - name: Build WARP-in-WARP Mihomo YAML
@@ -107,12 +157,13 @@ jobs:
           INNER_PROTO: ${{ inputs.inner_proto }}
         run: |
           set -euo pipefail
+
           cd work
+
           OUTER="$(cat outer.txt)"
 
-          # warpscout's current WARP-in-WARP implementation supports
-          # wg/awg for the nested tunnel. The outer tunnel is the one
-          # crossing the runner's network; the inner tunnel is scanned through it.
+          echo "Building WARP-in-WARP configuration..."
+
           warpscout scan \
             -p "$OUTER_PROTO" \
             -inner-proto "$INNER_PROTO" \
@@ -124,45 +175,42 @@ jobs:
 
           test -s ../configs/warp-in-warp.yaml
 
-      - name: Wrap YAML as subscription file
+          echo "Mihomo configuration generated successfully."
+
+      - name: Create subscription file
         shell: bash
         run: |
           set -euo pipefail
-          cp configs/warp-in-warp.yaml configs/warp-in-warp.txt
 
-          cat > configs/README.txt <<EOF
-WARP-in-WARP subscription
+          cp \
+            configs/warp-in-warp.yaml \
+            configs/warp-in-warp.txt
 
-GitHub Raw:
-https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/configs/warp-in-warp.txt
+          printf '%s\n' \
+            'WARP-in-WARP subscription' \
+            '' \
+            'GitHub Raw:' \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/configs/warp-in-warp.txt" \
+            '' \
+            'jsDelivr CDN:' \
+            "https://cdn.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/configs/warp-in-warp.txt" \
+            '' \
+            'Generated by GitHub Actions.' \
+            > configs/README.txt
 
-jsDelivr CDN:
-https://cdn.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/configs/warp-in-warp.txt
+          echo "Subscription files created."
 
-Generated by GitHub Actions.
-EOF
-
-      - name: Validate basic Mihomo structure
+      - name: Validate Mihomo configuration
         shell: bash
         run: |
           set -euo pipefail
-          grep -q '^proxies:' configs/warp-in-warp.yaml
-          grep -q 'dialer-proxy:' configs/warp-in-warp.yaml
-          grep -q 'type: wireguard' configs/warp-in-warp.yaml || \
-            grep -q 'type: awg' configs/warp-in-warp.yaml
 
-      - name: Commit generated subscription
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add configs/warp-in-warp.yaml configs/warp-in-warp.txt configs/README.txt
-          if git diff --cached --quiet; then
-            echo "No generated-file changes."
-          else
-            git commit -m "Update WARP-in-WARP subscription"
-            git push
-          fi
+          echo "Checking generated configuration..."
 
-      - name
+          grep -q '^proxies:' \
+            configs/warp-in-warp.yaml
+
+          grep -q 'dialer-proxy:' \
+            configs/warp-in-warp.yaml
+
+          if grep -q 'type: wireguard' con
