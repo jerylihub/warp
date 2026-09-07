@@ -56,7 +56,8 @@ jobs:
 
           API="https://api.github.com/repos/vernette/warpscout/releases/latest"
 
-          URL="$(curl -fsSL "$API" | python3 -c '
+          URL="$(
+            curl -fsSL "$API" | python3 -c '
           import json
           import sys
 
@@ -69,7 +70,8 @@ jobs:
           ]
 
           print(assets[0] if assets else "")
-          ')"
+          '
+          )"
 
           test -n "$URL"
 
@@ -163,6 +165,8 @@ jobs:
           OUTER="$(cat outer.txt)"
 
           echo "Building WARP-in-WARP configuration..."
+          echo "Through: $OUTER ($OUTER_PROTO)"
+          echo "Inner protocol: $INNER_PROTO"
 
           warpscout scan \
             -p "$OUTER_PROTO" \
@@ -170,10 +174,10 @@ jobs:
             -through "$OUTER" \
             -best \
             -no-report \
-            -conf ../configs/warp-in-warp.yaml \
+            -conf configs/warp-in-warp.yaml \
             -conf-type mihomo
 
-          test -s ../configs/warp-in-warp.yaml
+          test -s configs/warp-in-warp.yaml
 
           echo "Mihomo configuration generated successfully."
 
@@ -181,6 +185,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          test -s configs/warp-in-warp.yaml
 
           cp \
             configs/warp-in-warp.yaml \
@@ -207,10 +213,60 @@ jobs:
 
           echo "Checking generated configuration..."
 
+          test -s configs/warp-in-warp.yaml
+
           grep -q '^proxies:' \
             configs/warp-in-warp.yaml
 
           grep -q 'dialer-proxy:' \
             configs/warp-in-warp.yaml
 
-          if grep -q 'type: wireguard' con
+          if grep -q 'type: wireguard' configs/warp-in-warp.yaml; then
+            echo "WireGuard proxy found."
+          elif grep -q 'type: wireguard' configs/warp-in-warp.txt; then
+            echo "WireGuard proxy found in subscription file."
+          else
+            echo "ERROR: WireGuard proxy not found."
+            exit 1
+          fi
+
+          echo "Mihomo configuration validation passed."
+
+      - name: Show generated files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "===== Generated files ====="
+
+          ls -lh configs/
+
+          echo "===== Configuration summary ====="
+
+          grep -E '^[[:space:]]*(- name:|name:|type:|server:|port:|dialer-proxy:)' \
+            configs/warp-in-warp.yaml || true
+
+      - name: Commit generated subscription
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            configs/warp-in-warp.yaml \
+            configs/warp-in-warp.txt \
+            configs/README.txt
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit \
+            -m "chore: update WARP-in-WARP subscription"
+
+          git push
