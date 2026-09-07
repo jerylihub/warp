@@ -152,7 +152,7 @@ jobs:
 
           printf '%s\n' "$OUTER" > outer.txt
 
-      - name: Build WARP-in-WARP Mihomo YAML
+            - name: Build WARP-in-WARP Mihomo YAML
         shell: bash
         env:
           OUTER_PROTO: ${{ inputs.outer_proto }}
@@ -174,12 +174,12 @@ jobs:
             -through "$OUTER" \
             -best \
             -no-report \
-            -conf configs/warp-in-warp.yaml \
+            -conf ../configs/warp-in-warp.yaml \
             -conf-type mihomo
 
-          test -s configs/warp-in-warp.yaml
+          test -s ../configs/warp-in-warp.yaml
 
-          echo "Mihomo configuration generated successfully."
+          echo "Mihomo configuration generated successfully.""
 
       - name: Create subscription file
         shell: bash
